@@ -1,8 +1,9 @@
 name: CI
 
 on:
-  push:
-  pull_request:
+  # Automatic CI is disabled for this deployment branch. Run manually when
+  # the legacy test suite is needed; Container Image is the only push workflow.
+  workflow_dispatch:
 
 permissions:
   contents: read
