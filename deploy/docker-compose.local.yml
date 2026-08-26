@@ -7,7 +7,7 @@
 #
 # Quick Start:
 #   1. Copy .env.example to .env and configure
-#   2. mkdir -p data postgres_data redis_data
+#   2. Ensure the external PostgreSQL and Redis services are reachable
 #   3. docker-compose -f docker-compose.local.yml up -d
 #   4. Check logs: docker-compose -f docker-compose.local.yml logs -f sub2api
 #   5. Access: http://localhost:8080
@@ -17,6 +17,8 @@
 #   2. tar czf sub2api-deploy.tar.gz deploy/
 #   3. Transfer to new server and extract
 #   4. docker-compose -f docker-compose.local.yml up -d
+#
+# PostgreSQL and Redis are external services and are not started by this file.
 # =============================================================================
 
 services:
@@ -24,7 +26,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: weishaw/sub2api:latest
+    image: ghcr.io/modelboxs/sub_pool:latest
     container_name: sub2api
     restart: unless-stopped
     security_opt:
@@ -60,12 +62,12 @@ services:
       # =======================================================================
       # Database Configuration (PostgreSQL)
       # =======================================================================
-      - DATABASE_HOST=postgres
+      - DATABASE_HOST=${DATABASE_HOST:?DATABASE_HOST is required}
       - DATABASE_PORT=5432
-      - DATABASE_USER=${POSTGRES_USER:-sub2api}
-      - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      - DATABASE_DBNAME=${POSTGRES_DB:-sub2api}
-      - DATABASE_SSLMODE=disable
+      - DATABASE_USER=${DATABASE_USER:-sub2api}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      - DATABASE_DBNAME=${DATABASE_DBNAME:-sub2api}
+      - DATABASE_SSLMODE=${DATABASE_SSLMODE:-disable}
       - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
       - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
       - DATABASE_CONN_MAX_LIFETIME_MINUTES=${DATABASE_CONN_MAX_LIFETIME_MINUTES:-30}
@@ -74,7 +76,7 @@ services:
       # =======================================================================
       # Redis Configuration
       # =======================================================================
-      - REDIS_HOST=redis
+      - REDIS_HOST=${REDIS_HOST:?REDIS_HOST is required}
       - REDIS_PORT=6379
       - REDIS_USERNAME=${REDIS_USERNAME:-}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -202,92 +204,9 @@ services:
       - GATEWAY_IMAGE_CONCURRENCY_OVERFLOW_MODE=${GATEWAY_IMAGE_CONCURRENCY_OVERFLOW_MODE:-reject}
       - GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS=${GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS:-30}
       - GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS:-100}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  # ===========================================================================
-  # PostgreSQL Database
-  # ===========================================================================
-  postgres:
-    image: postgres:18-alpine
-    container_name: sub2api-postgres
-    restart: unless-stopped
-    ulimits:
-      nofile:
-        soft: 100000
-        hard: 100000
-    volumes:
-      # Local directory mapping for easy migration
-      - ./postgres_data:/var/lib/postgresql/data:Z
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-sub2api}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      - POSTGRES_DB=${POSTGRES_DB:-sub2api}
-      - PGDATA=/var/lib/postgresql/data
-      - TZ=${TZ:-Asia/Shanghai}
-    networks:
-      - sub2api-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    # 注意：不暴露端口到宿主机，应用通过内部网络连接
-    # 如需调试，可临时添加：ports: ["127.0.0.1:5433:5432"]
-
-  # ===========================================================================
-  # Redis Cache
-  # ===========================================================================
-  redis:
-    image: redis:8-alpine
-    container_name: sub2api-redis
-    restart: unless-stopped
-    ulimits:
-      nofile:
-        soft: 100000
-        hard: 100000
-    volumes:
-      # Local directory mapping for easy migration
-      - ./redis_data:/data:Z
-    # The command is one quoted script for the inner `sh -c`. Compose keeps
-    # the newlines inside the quoted string, so every line needs a trailing
-    # `\` — without it, `redis-server` on the first line runs with no flags
-    # at all, and the --save/--appendonly/--appendfsync lines are never read.
-    command: >
-        sh -c '
-          redis-server \
-          --save 60 1 \
-          --appendonly yes \
-          --appendfsync everysec \
-          ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
-    environment:
-      - TZ=${TZ:-Asia/Shanghai}
-      # REDISCLI_AUTH is used by redis-cli for authentication (safer than -a flag)
-      - REDISCLI_AUTH=${REDIS_PASSWORD:-}
-    networks:
-      - sub2api-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
-# =============================================================================
-# Networks
-# =============================================================================
-networks:
-  sub2api-network:
-    driver: bridge
