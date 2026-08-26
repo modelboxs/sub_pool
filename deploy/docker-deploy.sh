@@ -4,8 +4,8 @@
 # =============================================================================
 # This script prepares deployment files for Sub2API:
 #   - Downloads docker-compose.local.yml and .env.example
-#   - Generates secure secrets (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
-#   - Creates necessary data directories
+#   - Generates secure application secrets (JWT_SECRET, TOTP_ENCRYPTION_KEY)
+#   - Creates the application data directory
 #
 # After running this script, you can start services with:
 #   docker-compose up -d
@@ -21,7 +21,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # GitHub raw content base URL
-GITHUB_RAW_URL="https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy"
+GITHUB_RAW_URL="https://raw.githubusercontent.com/modelboxs/sub_pool/dev_pool/deploy"
 
 # Print colored message
 print_info() {
@@ -103,8 +103,6 @@ main() {
     # Generate secrets
     JWT_SECRET=$(generate_secret)
     TOTP_ENCRYPTION_KEY=$(generate_secret)
-    POSTGRES_PASSWORD=$(generate_secret)
-
     # Create .env from .env.example
     cp .env.example .env
 
@@ -113,18 +111,16 @@ main() {
         # GNU sed (Linux)
         sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${JWT_SECRET}/" .env
         sed -i "s/^TOTP_ENCRYPTION_KEY=.*/TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY}/" .env
-        sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${POSTGRES_PASSWORD}/" .env
     else
         # BSD sed (macOS)
         sed -i '' "s/^JWT_SECRET=.*/JWT_SECRET=${JWT_SECRET}/" .env
         sed -i '' "s/^TOTP_ENCRYPTION_KEY=.*/TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY}/" .env
-        sed -i '' "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${POSTGRES_PASSWORD}/" .env
     fi
 
     # Create data directories
     print_info "Creating data directories..."
-    mkdir -p data postgres_data redis_data
-    print_success "Created data directories"
+    mkdir -p data
+    print_success "Created application data directory"
 
     # Set secure permissions for .env file (readable/writable only by owner)
     chmod 600 .env
@@ -135,8 +131,7 @@ main() {
     echo "  Preparation Complete!"
     echo "=========================================="
     echo ""
-    echo "Generated secure credentials:"
-    echo "  POSTGRES_PASSWORD:     ${POSTGRES_PASSWORD}"
+    echo "Generated application credentials:"
     echo "  JWT_SECRET:            ${JWT_SECRET}"
     echo "  TOTP_ENCRYPTION_KEY:   ${TOTP_ENCRYPTION_KEY}"
     echo ""
@@ -148,11 +143,11 @@ main() {
     echo "  .env                      - Environment variables (generated secrets)"
     echo "  .env.example              - Example template (for reference)"
     echo "  data/                     - Application data (will be created on first run)"
-    echo "  postgres_data/            - PostgreSQL data"
-    echo "  redis_data/               - Redis data"
+    echo "  External PostgreSQL      - Configure DATABASE_HOST and credentials in .env"
+    echo "  External Redis           - Configure REDIS_HOST and credentials in .env"
     echo ""
     echo "Next steps:"
-    echo "  1. (Optional) Edit .env to customize configuration"
+    echo "  1. Edit .env and set DATABASE_HOST, REDIS_HOST, and external credentials"
     echo "  2. Start services:"
     echo "     docker-compose up -d"
     echo ""

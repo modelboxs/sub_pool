@@ -6,7 +6,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 
 | Method | Best For | Setup Wizard |
 |--------|----------|--------------|
-| **Docker Compose** | Quick setup, all-in-one | Not needed (auto-setup) |
+| **Docker Compose** | Application container with external services | Not needed (auto-setup) |
 | **Apple container** | Native local stack on macOS 26 | Not needed (auto-setup) |
 | **Binary Install** | Production servers, systemd | Web-based wizard |
 
@@ -14,8 +14,9 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 
 | File | Description |
 |------|-------------|
-| `docker-compose.yml` | Docker Compose configuration (named volumes) |
-| `docker-compose.local.yml` | Docker Compose configuration (local directories, easy migration) |
+| `docker-compose.yml` | Production Compose configuration (external PostgreSQL/Redis, named app volume) |
+| `docker-compose.local.yml` | Production Compose configuration (external PostgreSQL/Redis, local app data) |
+| `docker-compose.standalone.yml` | Explicit external-service deployment example |
 | `docker-deploy.sh` | **One-click Docker deployment script (recommended)** |
 | `apple-container.sh` | Native Apple `container` lifecycle script |
 | `APPLE_CONTAINER.md` | Apple `container` deployment and operations guide |
@@ -50,30 +51,55 @@ See [APPLE_CONTAINER.md](./APPLE_CONTAINER.md) for configuration, upgrades, pers
 
 ## Docker Deployment (Recommended)
 
+### GitHub Container Registry
+
+Pushes to the `dev_pool` branch run `.github/workflows/container-image.yml`.
+The workflow does not run for pull requests and publishes:
+
+```text
+ghcr.io/modelboxs/sub_pool:latest
+ghcr.io/modelboxs/sub_pool:sha-<short-commit-sha>
+```
+
+In the repository settings, enable **Settings > Actions > General > Workflow
+permissions > Read and write permissions** so the automatic `GITHUB_TOKEN` can
+publish packages. For a private package, authenticate before pulling:
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+docker pull ghcr.io/modelboxs/sub_pool:latest
+```
+
+The production Compose files start only the application. PostgreSQL and Redis
+must be running externally and must be configured with `DATABASE_HOST` and
+`REDIS_HOST` in `.env`. Use `docker-compose.dev.yml` only when you intentionally
+want a local development database and cache.
+
 ### Method 1: One-Click Deployment (Recommended)
 
 Use the automated preparation script for the easiest setup:
 
 ```bash
 # Download and run the preparation script
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/modelboxs/sub_pool/dev_pool/deploy/docker-deploy.sh | bash
 
 # Or download first, then run
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh -o docker-deploy.sh
+curl -sSL https://raw.githubusercontent.com/modelboxs/sub_pool/dev_pool/deploy/docker-deploy.sh -o docker-deploy.sh
 chmod +x docker-deploy.sh
 ./docker-deploy.sh
 ```
 
 **What the script does:**
 - Downloads `docker-compose.local.yml` and `.env.example`
-- Automatically generates secure secrets (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
+- Automatically generates application secrets (`JWT_SECRET`, `TOTP_ENCRYPTION_KEY`)
 - Creates `.env` file with generated secrets
-- Creates necessary data directories (data/, postgres_data/, redis_data/)
-- **Displays generated credentials** (POSTGRES_PASSWORD, JWT_SECRET, etc.)
+- Creates the application data directory (`data/`)
+- Reminds you to configure the external PostgreSQL and Redis connection values
 
 **After running the script:**
 ```bash
 # Start services
+# Edit .env first: set DATABASE_HOST, REDIS_HOST, and external credentials.
 docker compose -f docker-compose.local.yml up -d
 
 # View logs
@@ -92,13 +118,13 @@ If you prefer manual control:
 
 ```bash
 # Clone repository
-git clone https://github.com/Wei-Shaw/sub2api.git
-cd sub2api/deploy
+git clone -b dev_pool https://github.com/modelboxs/sub_pool.git
+cd sub_pool/deploy
 
 # Configure environment
 cp .env.example .env
 chmod 600 .env
-nano .env  # Set POSTGRES_PASSWORD and other required variables
+nano .env  # Set DATABASE_HOST, REDIS_HOST, and external credentials
 
 # Generate secure secrets (recommended)
 JWT_SECRET=$(openssl rand -hex 32)
@@ -106,8 +132,8 @@ TOTP_ENCRYPTION_KEY=$(openssl rand -hex 32)
 echo "JWT_SECRET=${JWT_SECRET}" >> .env
 echo "TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY}" >> .env
 
-# Create data directories
-mkdir -p data postgres_data redis_data
+# Create application data directory
+mkdir -p data
 
 # Start all services using local directory version
 docker compose -f docker-compose.local.yml up -d
@@ -123,10 +149,10 @@ docker compose -f docker-compose.local.yml logs -f sub2api
 
 | Version | Data Storage | Migration | Best For |
 |---------|-------------|-----------|----------|
-| **docker-compose.local.yml** | Local directories (./data, ./postgres_data, ./redis_data) | ✅ Easy (tar entire directory) | Production, need frequent backups/migration |
+| **docker-compose.local.yml** | Local application directory (./data); DB/Redis external | ✅ Easy (tar application directory) | Production, need frequent app-data backups/migration |
 | **docker-compose.yml** | Named volumes (/var/lib/docker/volumes/) | ⚠️ Requires docker commands | Simple setup, don't need migration |
 
-**Recommendation:** Use `docker-compose.local.yml` (deployed by `docker-deploy.sh`) for easier data management and migration.
+**Recommendation:** Use `docker-compose.local.yml` (deployed by `docker-deploy.sh`) for easier application-data management. Back up external PostgreSQL and Redis separately.
 
 ### How Auto-Setup Works
 
@@ -199,9 +225,9 @@ docker compose -f docker-compose.local.yml restart sub2api
 docker compose -f docker-compose.local.yml pull
 docker compose -f docker-compose.local.yml up -d
 
-# Remove all data (caution!)
+# Remove application data only (caution; external DB/Redis are separate)
 docker compose -f docker-compose.local.yml down
-rm -rf data/ postgres_data/ redis_data/
+rm -rf data/
 ```
 
 For **named volumes version** (docker-compose.yml):
@@ -223,7 +249,7 @@ docker compose restart sub2api
 docker compose pull
 docker compose up -d
 
-# Remove all data (caution!)
+# Remove the named application volume (caution; external DB/Redis are separate)
 docker compose down -v
 ```
 
@@ -231,7 +257,12 @@ docker compose down -v
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `POSTGRES_PASSWORD` | **Yes** | - | PostgreSQL password |
+| `DATABASE_HOST` | **Yes** | - | External PostgreSQL hostname or IP |
+| `DATABASE_USER` | **Yes** | `sub2api` | External PostgreSQL user |
+| `DATABASE_PASSWORD` | **Yes** | - | External PostgreSQL password |
+| `DATABASE_DBNAME` | No | `sub2api` | External PostgreSQL database name |
+| `DATABASE_SSLMODE` | No | `disable` | PostgreSQL TLS mode |
+| `REDIS_HOST` | **Yes** | - | External Redis hostname or IP |
 | `JWT_SECRET` | **Recommended** | *(auto-generated)* | JWT secret (fixed for persistent sessions) |
 | `TOTP_ENCRYPTION_KEY` | **Recommended** | *(auto-generated)* | TOTP encryption key (fixed for persistent 2FA) |
 | `SERVER_PORT` | No | `8080` | Server port |
@@ -246,11 +277,13 @@ docker compose down -v
 
 See `.env.example` for all available options.
 
-> **Note:** The `docker-deploy.sh` script automatically generates `JWT_SECRET`, `TOTP_ENCRYPTION_KEY`, and `POSTGRES_PASSWORD` for you.
+> **Note:** The `docker-deploy.sh` script automatically generates `JWT_SECRET` and `TOTP_ENCRYPTION_KEY`. You must provide the external PostgreSQL and Redis connection values.
 
-### Easy Migration (Local Directory Version)
+### Easy Application Migration (Local Directory Version)
 
-When using `docker-compose.local.yml`, all data is stored in local directories, making migration simple:
+When using `docker-compose.local.yml`, application data and configuration are
+stored locally. PostgreSQL and Redis data remain on their external services and
+must be backed up or migrated separately:
 
 ```bash
 # On source server: Stop services and create archive
@@ -268,7 +301,8 @@ cd deployment/
 docker compose -f docker-compose.local.yml up -d
 ```
 
-Your entire deployment (configuration + data) is migrated!
+The application container and local data are migrated; external database and
+Redis backups are handled independently.
 
 ---
 
@@ -520,17 +554,15 @@ docker compose -f docker-compose.local.yml ps
 # View detailed logs
 docker compose -f docker-compose.local.yml logs --tail=100 sub2api
 
-# Check database connection
-docker compose -f docker-compose.local.yml exec postgres pg_isready
-
-# Check Redis connection
-docker compose -f docker-compose.local.yml exec redis redis-cli ping
+# Check external service connectivity from the deployment host
+nc -zv "$DATABASE_HOST" "${DATABASE_PORT:-5432}"
+nc -zv "$REDIS_HOST" "${REDIS_PORT:-6379}"
 
 # Restart all services
 docker compose -f docker-compose.local.yml restart
 
-# Check data directories
-ls -la data/ postgres_data/ redis_data/
+# Check application data
+ls -la data/
 ```
 
 For **named volumes version**:
@@ -541,12 +573,6 @@ docker compose ps
 
 # View detailed logs
 docker compose logs --tail=100 sub2api
-
-# Check database connection
-docker compose exec postgres pg_isready
-
-# Check Redis connection
-docker compose exec redis redis-cli ping
 
 # Restart all services
 docker compose restart
