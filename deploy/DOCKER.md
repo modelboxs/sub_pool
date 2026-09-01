@@ -81,6 +81,19 @@ docker compose -f docker-compose.local.yml up -d
 `docker-compose.dev.yml` is the exception: it intentionally starts local
 PostgreSQL and Redis for development and integration testing.
 
+## Startup and Database Recovery
+
+Sub2API runs database migrations while starting. PostgreSQL may still be
+recovering briefly after a host, container runtime, or database restart. The application
+retries transient PostgreSQL startup and connection errors with bounded
+exponential backoff, then continues startup when the database is ready.
+Permanent errors such as invalid credentials, migration checksum mismatches,
+SQL errors, and incompatible data fail immediately.
+
+Because PostgreSQL is external to the production Compose deployment, ensure it
+is healthy and reachable before starting Sub2API. Application-level retries
+also cover brief interruptions while the external database recovers.
+
 ## Environment Variables
 
 | Variable | Description | Required | Default |
